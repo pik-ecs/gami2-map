@@ -1,4 +1,8 @@
-# Guide for labeling/annotating GAMI 2 data
+# Guide for labeling GAMI 2 data
+**Author:** Ishita Gopal
+
+**Date:** June 2026
+
 
 # Concepts
 
@@ -9,7 +13,8 @@ This step is **essential** because if a concept is vague, different people will 
 In short:
     **If humans don’t agree on the definition, the model can’t learn it either and evaluation itself becomes unreliable.**
 
-### Example: Good Movie
+## Below I show examples in increasing level of complexity
+### Example 1: Good Movie
 
 If we ask,
 
@@ -33,7 +38,7 @@ So until the criteria for a “good movie” is clearly defined, neither humans 
 
 The same challenge appears in text classification tasks such as sentiment analysis, misinformation detection, hate speech detection etc.
 
-### Example: Political Advertising
+### Example 2: Political Advertising
 Suppose we classify ads as:
 - Attack
 - Promote
@@ -110,29 +115,29 @@ It answers:
 IRR directly addresses this concern.
 
 ## What IRR tells you
-1. Whether the task is well-defined
-If coders frequently disagree (e.g., Attack vs Promote vs Contrast), it signals that:
+1. **Whether the task is well-defined**
 
+    If coders frequently disagree (e.g., human adaptation vs not), it signals that:
     - categories may be ambiguous
     - instructions may be unclear
     - the coding task is inherently subjective
 
 
-2. How stable the codebook is
-**High IRR** → coding rules are clear and consistently interpreted
-**Low IRR** → results depend heavily on individual coder judgment
+2. **How stable the codebook is**
 
-This is key for **generalizability**.
+    **High IRR** → coding rules are clear and consistently interpreted
 
-3. Transparency of the measurement process
-IRR provides evidence that the dataset is not just a set of resolved decisions, but a reproducible measurement system.
-Without it, you lose:
+    **Low IRR** → results depend heavily on individual coder judgment
 
+    This is key for **generalizability**.
+
+3. **Transparency of the measurement process**
+
+    IRR provides evidence that the dataset is not just a set of resolved decisions, but a reproducible measurement system.
+    Without it, you lose:
     - visibility into ambiguity in the task
     - evidence of reliability
     - comparability to other potential datasets
-
-Without IRR, this problem can remain hidden because final adjudicated labels may look clean even if the underlying task was unstable.
 
 ## IRR vs Adjudication
 
