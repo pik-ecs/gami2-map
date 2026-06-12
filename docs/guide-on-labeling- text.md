@@ -152,8 +152,38 @@ A useful way to think about it:
 - Adjudication asks: “What final label should we assign?”
 
 
-## Proposed Workflow for data labeling for inclusion classification and taxonomy:
+## Proposed Annotation Workflow for labeling data for inclusion classification and taxonomy labeling:
 
 ![Annotation Workflow](labeling_workflow_drawio.png)
 
 
+
+
+
+
+**Phase 1 - Build a Gold Set**
+- 2 researchers independently code a small pilot (100)
+- Calculate Cohen's kappa (κ) as researcher baseline
+- Update guidelines, re-code a fresh sample, recalculate κ each round
+- Stop when κ plateaus (< 0.02–0.03 gain between rounds)
+- Scale up coding to 300–500 items using finalized guidelines
+- Build a gold set of 500 pre-labeled items
+
+**Phase 2 — Annotator Training & Calibration**
+- Share guidelines and worked examples with all annotators
+- All annotators independently label a batch from the gold set (~100 items)
+- Measure per-annotator accuracy against gold labels
+- Calculate Fleiss' kappa as annotator baseline
+- Identify weak spots and misunderstandings before remaining annotation begins
+- If required, repeat with a fresh gold batch until annotators are aligned
+- **The highest κ the annotators can realistically achieve is capped by what the researchers achieved** - if researchers plateaued at κ = 0.75, do not expect annotators to reach κ = 0.90
+- **Use the researcher plateau κ to judge whether the annotators are performing well** - e.g. if researchers hit 0.75 and annotators reach 0.68, that is strong performance; if annotators are at 0.45, something is wrong with training or guidelines
+
+**Phase 3 — Main Annotation**
+- Assign 3 (or more) annotators per item
+- Clear-cut items → majority vote (eg: ≥ 2/3 agree)
+- Disputed items → adjudication by senior reviewer
+- Adjudicated items tagged as "hard cases" for downstream LLM analysis
+- If the target is to label a lot of documents (5-10K +):
+    - Maintain 10–15% overlap to monitor annotator drift *
+    - Re-run IRR every few hundred items to catch drift *
