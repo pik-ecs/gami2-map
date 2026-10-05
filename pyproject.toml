@@ -7,5 +7,15 @@ requires-python = ">=3.12"
 dependencies = [
     "mkdocs-material>=9.7.7",
     "pandas>=3.0.5",
+    "pyarrow>=25.0.1",
     "tool>=0.8.0",
+    "typer>=0.27.2",
 ]
+
+[project.scripts]
+build-labels = "gami2_map.data.labels:main"
+make-splits = "gami2_map.data.splits:main"
+
+[build-system]
+requires = ["uv_build>=0.8.22,<0.9.0"]
+build-backend = "uv_build"
