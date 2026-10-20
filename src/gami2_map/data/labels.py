@@ -1,20 +1,33 @@
 """Build data/processed/<task>/labels.parquet from adjudicated label files.
 
 Raw files under data/labeling/<task>/ are the source of truth; this script only reads them.
-Re-run whenever more resolutions are completed:
+It merges them, applies the task's filter, and adds one split_<name> column per setup in the
+task's "splits" list (see splits.py). Settings are in tasks.py. Re-run whenever more
+resolutions are completed, or after changing the task's settings:
 
     uv run build-labels inout
     uv run build-labels --help
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Annotated
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import typer
 
+from gami2_map.data.splits import (
+    ID_COLUMN,
+    LABEL_COLUMN,
+    SEED,
+    SETTINGS_KEY,
+    add_split_columns,
+)
 from gami2_map.paths import available_tasks, task_labeling_dir, task_labels_path
+from gami2_map.tasks import task_config
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +42,9 @@ def read_resolved(path: Path, labeling_dir: Path, id_column: str) -> pd.DataFram
 def merge_resolved(
     files: list[Path],
     labeling_dir: Path,
-    id_column: str = "item_id",
-    text_columns: str | list[str] = ("title", "text"),
-    label_column: str = "resolved",
+    label_column: str,
+    id_column: str,
+    text_columns: str | list[str],
 ) -> pd.DataFrame:
     """Stack all resolved files into one table; each paper must appear exactly once.
 
@@ -73,22 +86,34 @@ def merge_resolved(
 
     for col in text_columns:
         df[col] = df[col].fillna("").astype(str).str.strip()
-    df = df.rename(columns={id_column: "item_id", label_column: "label"})
-    df["label"] = df["label"].astype(int)
+
+    df = df.rename(columns={id_column: ID_COLUMN, label_column: LABEL_COLUMN})
+    df[LABEL_COLUMN] = df[LABEL_COLUMN].astype(int)
 
     return df.reset_index(drop=True)
 
 
 def summarise(df: pd.DataFrame, text_columns: list[str]) -> None:
-    logger.info(f"{len(df):,} labelled papers, {df['label'].mean():.1%} include")
+    logger.info(f"{len(df):,} labelled papers, {df[LABEL_COLUMN].mean():.1%} include")
     logger.info(
         "Empty: "
         + "; ".join(f"{col} {(df[col] == '').sum():,}" for col in text_columns)
     )
     logger.info(
         "Per file:\n"
-        + df.groupby("source_file")["label"].agg(["size", "sum", "mean"]).to_string()
+        + df.groupby("source_file")[LABEL_COLUMN]
+        .agg(["size", "sum", "mean"])
+        .to_string()
     )
+
+
+def write_labels(df: pd.DataFrame, path: Path, settings: dict) -> None:
+    """Write labels.parquet with `settings` (split seed, test size, counts, fingerprints)
+    stored in its metadata; load.load_settings reads them back."""
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    metadata = {**(table.schema.metadata or {}), SETTINGS_KEY: json.dumps(settings)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table.replace_schema_metadata(metadata), path)
 
 
 def build(
@@ -105,22 +130,53 @@ def build(
         ),
     ] = None,
     resolved_glob: Annotated[
-        str,
-        typer.Option(help="Glob for resolved files, relative to labeling-dir"),
-    ] = "**/04_resolved/*_resolved.csv",
-    id_column: Annotated[
-        str,
-        typer.Option(help="Column identifying each paper; must be unique across files"),
-    ] = "item_id",
-    text_column: Annotated[
-        list[str],
+        str | None,
         typer.Option(
-            help="Column holding paper text; repeat for several, e.g. title and text"
+            help="Glob for resolved files, relative to labeling-dir [default: from tasks.py]"
         ),
-    ] = ["title", "text"],
+    ] = None,
+    id_column: Annotated[
+        str | None,
+        typer.Option(
+            help="Column identifying each paper; must be unique across files [default: from tasks.py]"
+        ),
+    ] = None,
+    text_column: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Column holding paper text; repeat for several, e.g. title and text [default: from tasks.py]"
+        ),
+    ] = None,
     label_column: Annotated[
-        str, typer.Option(help="Column holding the final adjudicated label")
-    ] = "resolved",
+        str | None,
+        typer.Option(
+            help="Column holding the final adjudicated label [default: from tasks.py]"
+        ),
+    ] = None,
+    filter: Annotated[
+        str | None,
+        typer.Option(
+            help='Papers to keep, as a pandas query, e.g. "not abstract_missing" [default: from tasks.py]'
+        ),
+    ] = None,
+    test_size: Annotated[
+        float | None,
+        typer.Option(
+            help="Fraction of papers held out as test; holdout also uses it for validation [default: from tasks.py]"
+        ),
+    ] = None,
+    stratify: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Column to stratify the splits on besides the label; repeat for several [default: from tasks.py]"
+        ),
+    ] = None,
+    seed: Annotated[
+        str,
+        typer.Option(
+            help="Hash salt for the splits; a new value gives different splits"
+        ),
+    ] = SEED,
     output: Annotated[
         Path | None,
         typer.Option(
@@ -128,13 +184,21 @@ def build(
         ),
     ] = None,
 ) -> None:
-    """Build labels.parquet from one task's adjudicated label files."""
+    """Build labels.parquet, with split columns, from one task's adjudicated label files."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if labeling_dir is None and task not in available_tasks():
         raise typer.BadParameter(
             f"Unknown task {task!r}; available: {available_tasks()}"
         )
+    config = task_config(task)
+    resolved_glob = resolved_glob or config["resolved_glob"]
+    id_column = id_column or config["id_column"]
+    text_column = text_column or config["text_columns"]
+    label_column = label_column or config["label_column"]
+    filter = filter or config.get("filter")
+    test_size = test_size or config["test_size"]
+    stratify = stratify or config.get("stratify", [])
     labeling_dir = labeling_dir or task_labeling_dir(task)
     output = output or task_labels_path(task)
 
@@ -143,11 +207,25 @@ def build(
         raise typer.BadParameter(f"No files match {resolved_glob} under {labeling_dir}")
     logger.info(f"Reading {len(files)} resolved files")
 
-    df = merge_resolved(files, labeling_dir, id_column, text_column, label_column)
+    df = merge_resolved(
+        files,
+        labeling_dir,
+        label_column=label_column,
+        id_column=id_column,
+        text_columns=text_column,
+    )
+    if filter:
+        kept = df.query(filter).reset_index(drop=True)
+        logger.info(f"Filter {filter!r} dropped {len(df) - len(kept):,} papers")
+        df = kept
     summarise(df, text_column)
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(output, index=False)
+    previous = pd.read_parquet(output) if output.exists() else None
+    df, settings = add_split_columns(
+        df, config["splits"], test_size, seed, stratify=stratify, previous=previous
+    )
+
+    write_labels(df, output, settings)
     logger.info(f"Wrote {output}")
 
 

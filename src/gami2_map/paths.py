@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data"
 LABELING_DIR = DATA_DIR / "labeling"
 PROCESSED_DIR = DATA_DIR / "processed"
-OUTPUT_DIR = ROOT / "outputs"
+OUTPUT_DIR = ROOT / "results"
 
 
 def task_labeling_dir(task: str) -> Path:
@@ -17,13 +17,8 @@ def task_labeling_dir(task: str) -> Path:
 
 
 def task_labels_path(task: str) -> Path:
-    """labels.parquet for one task, written by `build-labels <task>`."""
+    """labels.parquet for one task, with its split columns, written by `build-labels <task>`."""
     return PROCESSED_DIR / task / "labels.parquet"
-
-
-def task_splits_dir(task: str) -> Path:
-    """Split files for one task (splits/test_<pct>/<strategy>_seed<n>.json), written by `make-splits <task>`."""
-    return PROCESSED_DIR / task / "splits"
 
 
 def available_tasks() -> list[str]:
