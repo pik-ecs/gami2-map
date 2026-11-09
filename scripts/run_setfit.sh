@@ -17,7 +17,7 @@ source "$(dirname "$0")/common.sh"
 
 TASK="inout"
 
-# Any of config.py's SETFIT checkpoints: mpnet
+# Any of config.py's SETFIT checkpoints: mpnet, allenai
 MODELS=(mpnet)
 
 # true: tune on validation only (no final model, test unused). false: train the final model

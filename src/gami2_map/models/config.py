@@ -13,7 +13,12 @@ SETFIT = {
             "checkpoint": "sentence-transformers/all-mpnet-base-v2",
             "max_length": 384,
         },
-        "allenai": {"checkpoint": "sentence-transformers/allenai-specter"},
+        # SPECTER: SciBERT trained on scientific papers (title + abstract); 512 is its own
+        # max_seq_length
+        "allenai": {
+            "checkpoint": "sentence-transformers/allenai-specter",
+            "max_length": 512,
+        },
     },
     # For the logistic regression head: weights includes up so the rare class isn't ignored
     # at the 0.5 threshold (as for CLASSICAL)
@@ -42,6 +47,11 @@ CLASSICAL = {
         "mpnet": {
             "checkpoint": "sentence-transformers/all-mpnet-base-v2",
             "max_length": 384,
+        },
+        # SPECTER: SciBERT trained on scientific papers (title + abstract)
+        "allenai": {
+            "checkpoint": "sentence-transformers/allenai-specter",
+            "max_length": 512,
         },
         # Averages word vectors over the whole text: no max_length
         "glove": {

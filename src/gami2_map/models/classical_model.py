@@ -4,7 +4,7 @@
     classifier    logreg, svm
     features      tfidf, count: bag-of-words (TF-IDF weights or raw counts), fit on the
                       training papers
-                  mpnet, glove: frozen embeddings
+                  mpnet, allenai, glove: frozen embeddings
 
     e.g. logreg-tfidf, svm-count, logreg-mpnet.
     - C is tuned for every model
