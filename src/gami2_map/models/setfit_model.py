@@ -26,6 +26,7 @@ Run after `build-labels`:
 from pathlib import Path
 
 import numpy as np
+import torch
 from datasets import Dataset, DatasetDict
 from setfit import SetFitModel, Trainer, TrainingArguments
 
@@ -71,6 +72,7 @@ def fit(
         batch_size=params["batch_size"],
         num_epochs=params["epochs"],
         max_length=max_length,
+        use_amp=SETFIT["use_amp"] and torch.cuda.is_available(),
         save_strategy="no",
         logging_strategy="no",
         seed=seed,
@@ -98,6 +100,7 @@ SPEC = ModelSpec(
     predict_include=include_probabilities,
     save=save,
     log_scale=SETFIT_LOG_SCALE,
+    class_weight=SETFIT["class_weight"],
     default_trials=20,
 )
 

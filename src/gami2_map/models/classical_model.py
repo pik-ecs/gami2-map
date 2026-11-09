@@ -4,7 +4,7 @@
     classifier    logreg, svm
     features      tfidf, count: bag-of-words (TF-IDF weights or raw counts), fit on the
                       training papers
-                  mpnet, allenai, glove: frozen embeddings
+                  mpnet, allenai-specter, bge-base, glove: frozen embeddings
 
     e.g. logreg-tfidf, svm-count, logreg-mpnet.
     - C is tuned for every model
@@ -249,6 +249,7 @@ SPEC = ModelSpec(
     predict_include=include_probabilities,
     save=save,
     log_scale=CLASSICAL_LOG_SCALE,
+    class_weight=CLASSICAL["class_weight"],
     default_trials=30,
     # Each trial is scored on 5 folds; classical models train in seconds, so it's cheap
     default_split="cv5",
