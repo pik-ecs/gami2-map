@@ -1,8 +1,12 @@
 """Build data/processed/<task>/labels.parquet from adjudicated label files.
 
-Raw files under data/labeling/<task>/ are the source of truth; this script only reads them.
-It merges them, applies the task's filter, and adds one split_<name> column per setup in the
-task's "splits" list (see splits.py). Settings are in tasks.py. Re-run whenever more
+1. Raw files under data/labeling/<task>/ are the source of truth; this script only reads them.
+2. It merges them,
+3. Applies the task's relabels
+4. Applies the task's filter
+5. adds one split_<name> column per setup in the task's "splits" list (see splits.py).
+
+Settings are in tasks_settings.py. Re-run whenever more
 resolutions are completed, or after changing the task's settings:
 
     uv run build-labels inout
@@ -27,7 +31,7 @@ from gami2_map.data.splits import (
     add_split_columns,
 )
 from gami2_map.paths import available_tasks, task_labeling_dir, task_labels_path
-from gami2_map.tasks import task_config
+from gami2_map.tasks import data_config
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +52,7 @@ def merge_resolved(
 ) -> pd.DataFrame:
     """Stack all resolved files into one table; each paper must appear exactly once.
 
-    Only the id, text and label columns are required. The id and label columns come out
-    renamed to item_id/label; each text column keeps its name, with blanks filled with ""
-    and whitespace stripped. Every other column is kept as-is. Rows whose label is still
+    Only the id, text and label columns are required. Rows whose label is still
     empty are reported and left out.
     """
     if isinstance(text_columns, str):
@@ -93,6 +95,39 @@ def merge_resolved(
     return df.reset_index(drop=True)
 
 
+def apply_relabels(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Replace labels with the new_label column of the relabels CSV at `path`, matched on
+    item_id. Rows with no item_id are skipped."""
+    relabels = pd.read_csv(path, dtype={ID_COLUMN: str}).dropna(subset=[ID_COLUMN])
+    missing = {ID_COLUMN, "old_label", "new_label"} - set(relabels.columns)
+    if missing:
+        raise KeyError(f"Columns {sorted(missing)} not found in {path}")
+    labels = df.set_index(ID_COLUMN)[LABEL_COLUMN].copy()
+
+    unknown = sorted(set(relabels[ID_COLUMN]) - set(labels.index))
+    if unknown:
+        raise ValueError(
+            f"{len(unknown)} relabelled papers not in the resolved files: {unknown}"
+        )
+    for item_id, old, new in relabels[[ID_COLUMN, "old_label", "new_label"]].itertuples(
+        index=False
+    ):
+        if labels[item_id] != int(old):
+            raise ValueError(
+                f"Relabel of {item_id} expects old_label {int(old)}, but its label is "
+                f"{labels[item_id]}; fix {path}"
+            )
+        labels[item_id] = int(new)
+
+    changed = int(
+        (df[LABEL_COLUMN].to_numpy() != labels[df[ID_COLUMN]].to_numpy()).sum()
+    )
+    logger.info(
+        f"Relabels: {changed:,} labels changed ({len(relabels)} rows in {path.name})"
+    )
+    return df.assign(**{LABEL_COLUMN: labels[df[ID_COLUMN]].to_numpy()})
+
+
 def summarise(df: pd.DataFrame, text_columns: list[str]) -> None:
     logger.info(f"{len(df):,} labelled papers, {df[LABEL_COLUMN].mean():.1%} include")
     logger.info(
@@ -132,43 +167,43 @@ def build(
     resolved_glob: Annotated[
         str | None,
         typer.Option(
-            help="Glob for resolved files, relative to labeling-dir [default: from tasks.py]"
+            help="Glob for resolved files, relative to labeling-dir [default: from tasks_settings.py]"
         ),
     ] = None,
     id_column: Annotated[
         str | None,
         typer.Option(
-            help="Column identifying each paper; must be unique across files [default: from tasks.py]"
+            help="Column identifying each paper; must be unique across files [default: from tasks_settings.py]"
         ),
     ] = None,
     text_column: Annotated[
         list[str] | None,
         typer.Option(
-            help="Column holding paper text; repeat for several, e.g. title and text [default: from tasks.py]"
+            help="Column holding paper text; repeat for several, e.g. title and text [default: from tasks_settings.py]"
         ),
     ] = None,
     label_column: Annotated[
         str | None,
         typer.Option(
-            help="Column holding the final adjudicated label [default: from tasks.py]"
+            help="Column holding the final adjudicated label [default: from tasks_settings.py]"
         ),
     ] = None,
     filter: Annotated[
         str | None,
         typer.Option(
-            help='Papers to keep, as a pandas query, e.g. "not abstract_missing" [default: from tasks.py]'
+            help='Papers to keep, as a pandas query, e.g. "not abstract_missing" [default: from tasks_settings.py]'
         ),
     ] = None,
     test_size: Annotated[
         float | None,
         typer.Option(
-            help="Fraction of papers held out as test; holdout also uses it for validation [default: from tasks.py]"
+            help="Fraction of papers held out as test; holdout also uses it for validation [default: from tasks_settings.py]"
         ),
     ] = None,
     stratify: Annotated[
         list[str] | None,
         typer.Option(
-            help="Column to stratify the splits on besides the label; repeat for several [default: from tasks.py]"
+            help="Column to stratify the splits on besides the label; repeat for several [default: from tasks_settings.py]"
         ),
     ] = None,
     seed: Annotated[
@@ -191,7 +226,7 @@ def build(
         raise typer.BadParameter(
             f"Unknown task {task!r}; available: {available_tasks()}"
         )
-    config = task_config(task)
+    config = data_config(task)
     resolved_glob = resolved_glob or config["resolved_glob"]
     id_column = id_column or config["id_column"]
     text_column = text_column or config["text_columns"]
@@ -214,6 +249,8 @@ def build(
         id_column=id_column,
         text_columns=text_column,
     )
+    if config.get("relabels"):
+        df = apply_relabels(df, labeling_dir / config["relabels"])
     if filter:
         kept = df.query(filter).reset_index(drop=True)
         logger.info(f"Filter {filter!r} dropped {len(df) - len(kept):,} papers")

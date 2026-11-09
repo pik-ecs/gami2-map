@@ -8,7 +8,11 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data"
 LABELING_DIR = DATA_DIR / "labeling"
 PROCESSED_DIR = DATA_DIR / "processed"
+# Frozen-embedder outputs, reused across runs and tasks (see classical_model.make_embeddings)
+EMBEDDINGS_DIR = PROCESSED_DIR / "embeddings"
 OUTPUT_DIR = ROOT / "results"
+# Per-task settings (see gami2_map.tasks)
+TASKS_PATH = ROOT / "tasks_settings.py"
 
 
 def task_labeling_dir(task: str) -> Path:

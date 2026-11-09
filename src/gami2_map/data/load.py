@@ -37,7 +37,7 @@ def load_huggingface_splits(task: str, split: str = "holdout") -> DatasetDict:
     if column not in all_papers.column_names:
         raise KeyError(
             f"labels.parquet for {task!r} has no {column} column; add {split!r} to the "
-            f'task\'s "splits" in tasks.py and re-run `uv run build-labels {task}`'
+            f'task\'s "splits" in tasks_settings.py and re-run `uv run build-labels {task}`'
         )
     groups = ["test"] + sorted(set(all_papers[column]) - {"test"})
     return DatasetDict(

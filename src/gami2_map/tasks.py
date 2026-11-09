@@ -1,41 +1,32 @@
-"""Per-task settings: the raw resolved files under data/labeling/<task>/, and how build-labels
-filters and splits them.
+"""Reads the per-task settings from tasks_settings.py in the project root (kept outside src so it's easy
+to find and edit; see that file for what each entry holds)."""
 
-Add an entry when a new task's files arrive, and edit it when the folder layout, the
-export's column names, the filter or the splits change; then re-run `build-labels <task>`.
-Command-line options override these for a single run.
-"""
+import importlib.util
 
-TASKS = {
-    "inout": {
-        # Resolved files, relative to data/labeling/inout
-        "resolved_glob": "**/04_resolved/*_resolved.csv",
-        # Unique per paper across files
-        "id_column": "item_id",
-        # Title and abstract; joined into the model input
-        "text_columns": ["title", "text"],
-        # The final adjudicated label
-        "label_column": "resolved",
-        # Papers to keep (a pandas query on the merged table); leave out to keep all.
-        # Drops papers with no abstract unless a coder marked them ineligible.
-        "filter": "not abstract_missing or any_marked_ineligible",
-        # Split setups, each a split_<name> column: "holdout" (train / validation / test)
-        # or "cv<n>" (fold_0 ... / test). All share the same test set.
-        "splits": ["holdout", "cv3", "cv5"],
-        # Fraction held out as test; holdout also takes this fraction of the rest as validation
-        "test_size": 0.20,
-        # Columns to stratify the splits on besides the label; leave out for label only.
-        # decision: unanimous vs adjudicated, so every split has the same share of hard cases
-        "stratify": ["decision"],
-        # What tuning optimises on validation (see models/metrics.py); test reports all.
-        # f2 weights recall twice as much as precision: missing an include costs more
-        "metric": "f2",
-    },
-}
+from gami2_map.paths import TASKS_PATH
+
+
+def _load_tasks() -> dict:
+    spec = importlib.util.spec_from_file_location("project_tasks", TASKS_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.TASKS
 
 
 def task_config(task: str) -> dict:
-    """The TASKS entry for `task`."""
-    if task not in TASKS:
-        raise KeyError(f"No entry for task {task!r} in tasks.py; known: {list(TASKS)}")
-    return TASKS[task]
+    """The TASKS entry for `task`, read fresh from tasks_settings.py."""
+    tasks = _load_tasks()
+    if task not in tasks:
+        raise KeyError(f"No entry for task {task!r} in tasks_settings.py; known: {list(tasks)}")
+    return tasks[task]
+
+
+def data_config(task: str) -> dict:
+    """The task's "data" entry: what build-labels reads (files, columns, relabels, filter,
+    splits)."""
+    return task_config(task)["data"]
+
+
+def model_settings(task: str, model_key: str) -> dict:
+    """The task's "models" entry for `model_key` ({} if none): trials, params, search."""
+    return task_config(task).get("models", {}).get(model_key, {})

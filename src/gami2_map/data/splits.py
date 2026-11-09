@@ -1,7 +1,7 @@
 """Assign every labelled paper to train / validation / test, as columns of labels.parquet.
 
 build-labels calls add_split_columns after filtering, adding one column per setup in the
-task's "splits" list in tasks.py:
+task's "splits" list in tasks_settings.py:
 
     split_holdout    "train" / "validation" / "test"
     split_cv5        "fold_0" ... "fold_4" / "test"
