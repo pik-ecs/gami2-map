@@ -1,8 +1,9 @@
-"""The training pipeline for classical_model.py and setfit_model.py: tune, train the final
-model, test.
+"""The training pipeline for transformer_model.py, setfit_model.py and classical_model.py:
+tune, train the final model, test.
 Main functions:
     run_experiment       one run: settings → data → tune_and_train → test → results.json
-    make_cli             the command line (train-classical / train-setfit) → run_experiment
+    make_cli             the command line (train-transformer / train-setfit / train-classical)
+                         → run_experiment
 
 A run's settings come from config.py and the command line (in practice scripts/run_*.sh);
 the data, text columns and tuning metric from tasks_settings.py.
@@ -12,7 +13,7 @@ import ast
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -59,6 +60,21 @@ class ModelSpec:
     # The pretrained model each one uses, from config.py, recorded in results.json (none
     # for tfidf / count)
     checkpoints: dict[str, str] = field(default_factory=dict)
+    # The classifier's class weighting from config.py (e.g. "balanced"), recorded in
+    # results.json; None for unweighted
+    class_weight: str | None = None
+    # Models trained epoch by epoch (transformers). Their fit also takes eval_data, patience,
+    # metric, train_sample and on_epoch (see transformer_model.fit), and the model it returns
+    # has best_epoch: the epoch whose weights it kept
+    by_epoch: bool = False
+    # by_epoch only. Early stopping: each tuning fit stops once the tuning metric on
+    # validation hasn't improved for this many epochs and keeps its best epoch; the final
+    # model trains for the best trial's best epoch (defaults["epochs"] is then the most a fit
+    # trains for). None: no early stopping
+    early_stopping_patience: int | None = None
+    # by_epoch only. Pruning: tuning stops trials falling behind earlier ones after an epoch
+    # (see tuning.tune); holdout only
+    prune: bool = False
 
     def run_name(self, model_key: str) -> str:
         """e.g. classical-logreg-tfidf: the run's folder under results/<task>/."""
@@ -103,14 +119,30 @@ def run_experiment(
     search: dict | None = None,
     validation_only: bool = False,
     split: str | None = None,
+    early_stopping_patience: int | None = None,
+    prune: bool | None = None,
 ) -> dict:
     """Tune (on holdout validation or with CV, see `split`), train the final model, test it
-    once and write results/<task>/<run>/<timestamp>/."""
+    once and write results/<task>/<run>/<timestamp>/. `early_stopping_patience` (0 turns it
+    off) and `prune` override the spec's."""
     # 1. Settings and checks
     trials = spec.default_trials if trials is None else trials
     params, search = params or {}, search or {}
     split = split or spec.default_split
     metric = task_config(task).get("metric", "f1")
+    if early_stopping_patience is not None or prune is not None:
+        if not spec.by_epoch:
+            raise BadArguments(
+                f"{spec.method} models don't train by epoch: no early stopping or pruning"
+            )
+        if early_stopping_patience is not None:
+            spec = replace(spec, early_stopping_patience=early_stopping_patience or None)
+        if prune is not None:
+            spec = replace(spec, prune=prune)
+    # Pruning compares one learning curve per trial; with CV there is one per fold
+    if spec.prune and split != "holdout":
+        logger.info(f"No pruning with --split {split}: it needs holdout")
+        spec = replace(spec, prune=False)
     space = check_args(spec, task, model_key, params, search, metric, split)
     max_length = spec.max_lengths.get(model_key)
 
@@ -176,7 +208,11 @@ def run_experiment(
         "overrides": params,
         "params": tuned.params,
         "max_length": max_length,
+        "class_weight": spec.class_weight,
     }
+    if spec.by_epoch:
+        results["early_stopping_patience"] = spec.early_stopping_patience
+        results["pruning"] = spec.prune and trials > 0
     if not validation_only:
         results["test_metrics"] = test_metrics
     (run_dir / "results.json").write_text(json.dumps(results, indent=2))
@@ -210,12 +246,18 @@ def check_args(
             raise ValueError(
                 f"Unknown split {split!r}; use 'holdout' or 'cv<n>', e.g. 'cv5'"
             )
-        return search_space_for(
+        space = search_space_for(
             spec.defaults[model_key],
             spec.search_spaces[model_key],
             params,
             search,
         )
+        if spec.early_stopping_patience is not None and "epochs" in space:
+            raise ValueError(
+                "epochs can't be searched with early stopping, which picks it; fix the "
+                "most a fit trains for with --set epochs=<n>, or turn early stopping off"
+            )
+        return space
     except ValueError as e:
         raise BadArguments(str(e)) from e
 
@@ -232,11 +274,14 @@ def tune_and_train(
     train_final_model: bool = True,
 ) -> Tuned:
     """Search `space` with Optuna (each trial scored on validation or the CV folds), then
-    train the final model on all non-test data. trials=0: no search, train with `params`."""
+    train the final model on all non-test data. trials=0: no search, train with `params`.
+    With early stopping, the final model trains for the best trial's best epoch (for CV,
+    the mean over the folds)."""
     folds = validation_folds(data)
+    early_stopping = spec.early_stopping_patience is not None
 
-    def objective(trial_params: dict) -> dict[str, float]:
-        return score_trial(spec, model_key, folds, trial_params, metric)
+    def objective(trial_params: dict, report: Callable | None = None) -> dict[str, float]:
+        return score_trial(spec, model_key, folds, trial_params, metric, report)
 
     if trials == 0:
         logger.info(
@@ -244,8 +289,9 @@ def tune_and_train(
             f"{ {**spec.defaults[model_key], **params} }"
         )
         best_params, space, best_validation = params, {}, {}
-        # Without a final model, still score these settings so the run reports something
-        if not train_final_model:
+        # Without a final model, still score these settings so the run reports something;
+        # with early stopping, also to find how many epochs the final model trains for
+        if not train_final_model or early_stopping:
             best_validation = objective(params)
             logger.info(f"Validation metrics: {best_validation}")
     else:
@@ -258,7 +304,11 @@ def tune_and_train(
             log_scale=spec.log_scale,
             params=params,
             trials_path=trials_path,
+            prune=spec.prune,
         )
+
+    if early_stopping:
+        best_params = {**best_params, "epochs": max(1, round(best_validation["epoch"]))}
 
     model = None
     if train_final_model:
@@ -304,26 +354,65 @@ def score_trial(
     folds: list[Fold],
     trial_params: dict,
     metric: str,
+    report: Callable | None = None,
 ) -> dict[str, float]:
     """Train with `trial_params` on each fold; score on its validation set and on its train
-    sample (as train_*, to spot overfitting). Several folds are averaged."""
+    sample (as train_*, to spot overfitting). Several folds are averaged. by_epoch models
+    also report the epoch they kept, and, given `report` (pruning, holdout only), call
+    report(epoch, scores) after each epoch."""
     fold_scores = []
     for fold in folds:
+        fit_options = {}
+        if spec.early_stopping_patience is not None:
+            fit_options |= {
+                "eval_data": fold.validation,
+                "patience": spec.early_stopping_patience,
+                "metric": metric,
+            }
+        if report is not None:
+            fit_options |= {
+                "eval_data": fold.validation,
+                "train_sample": fold.train_sample,
+                "on_epoch": lambda epoch, predictions: report(
+                    epoch,
+                    {
+                        **validation_and_train(
+                            predictions["validation"], predictions["train"]
+                        ),
+                        "epoch": epoch,
+                    },
+                ),
+            }
         model = train(
             spec,
             model_key,
             fold.train,
             trial_params,
             output_dir=str(OUTPUT_DIR / "tuning" / spec.run_name(model_key)),
+            **fit_options,
         )
-        validation = scores(*spec.predict_include(model, fold.validation))
-        train_sample = scores(*spec.predict_include(model, fold.train_sample))
-        train_sample = {f"train_{name}": value for name, value in train_sample.items()}
-        fold_scores.append({**validation, **train_sample})
+        fold_score = validation_and_train(
+            spec.predict_include(model, fold.validation),
+            spec.predict_include(model, fold.train_sample),
+        )
+        if spec.by_epoch:
+            fold_score["epoch"] = model.best_epoch
+        fold_scores.append(fold_score)
 
     if len(fold_scores) == 1:
         return fold_scores[0]
     return average_folds(fold_scores, metric)
+
+
+def validation_and_train(
+    validation: tuple[np.ndarray, np.ndarray], train_sample: tuple[np.ndarray, np.ndarray]
+) -> dict[str, float]:
+    """Scores from (probabilities, labels) on validation, and on the train sample as train_*."""
+    train_scores = scores(*train_sample)
+    return {
+        **scores(*validation),
+        **{f"train_{name}": value for name, value in train_scores.items()},
+    }
 
 
 def average_folds(fold_scores: list[dict[str, float]], metric: str) -> dict[str, float]:
@@ -346,8 +435,10 @@ def train(
     train_data: Dataset,
     params: dict | None = None,
     output_dir: str | None = None,
+    **fit_options: Any,
 ) -> Any:
-    """Train one model with spec.defaults[model_key] overridden by `params`."""
+    """Train one model with spec.defaults[model_key] overridden by `params`; `fit_options`
+    go to spec.fit (by_epoch models only, see ModelSpec)."""
     params = params or {}
     config = spec.defaults[model_key]
     check_keys(params, config, "params")
@@ -358,6 +449,7 @@ def train(
         seed=TRAIN_SEED,
         max_length=spec.max_lengths.get(model_key),
         output_dir=output_dir or str(OUTPUT_DIR / "models" / spec.run_name(model_key)),
+        **fit_options,
     )
 
 
@@ -427,6 +519,21 @@ def make_cli(spec: ModelSpec) -> Callable[[], None]:
                 + "]"
             ),
         ] = None,
+        early_stopping_patience: Annotated[
+            int | None,
+            typer.Option(
+                min=0,
+                help="Transformers only: stop each tuning fit once the tuning metric on validation hasn't improved for this many epochs, and train the final model for the best trial's best epoch; 0 turns it off [default: config.py's]",
+            ),
+        ] = None,
+        prune: Annotated[
+            bool | None,
+            typer.Option(
+                "--prune/--no-prune",
+                help="Transformers only: stop tuning trials that fall behind earlier ones after an epoch (holdout only) [default: config.py's]",
+                show_default=False,
+            ),
+        ] = None,
     ) -> None:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         try:
@@ -443,6 +550,8 @@ def make_cli(spec: ModelSpec) -> Callable[[], None]:
                 search=search,
                 validation_only=validation_only,
                 split=split,
+                early_stopping_patience=early_stopping_patience,
+                prune=prune,
             )
         except BadArguments as e:
             raise typer.BadParameter(str(e)) from e

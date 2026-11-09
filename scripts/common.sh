@@ -1,4 +1,4 @@
-# Shared by run_classical.sh, run_transformers.sh and run_setfit.sh (sourced, not run).
+# Shared by run_classical.sh, run_transformer.sh and run_setfit.sh (sourced, not run).
 #
 #     run_models <command> <log name> <model>...
 #

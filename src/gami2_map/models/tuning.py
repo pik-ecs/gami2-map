@@ -1,4 +1,4 @@
-"""Hyperparameter search with Optuna, for pipeline.py (classical and SetFit models).
+"""Hyperparameter search with Optuna, for pipeline.py (transformer, SetFit and classical models).
 
 The pipeline passes tune() a function that trains a model with given settings and returns
 all validation metrics; Optuna only sees the tuning metric, and uses it to pick what to try
@@ -56,8 +56,15 @@ def suggest_params(
     return params
 
 
+# Pruning (see tune): no trial is pruned until PRUNE_STARTUP_TRIALS have finished, giving the
+# median something to go on, nor before its PRUNE_FROM_EPOCH-th epoch, so slow starters get a
+# chance
+PRUNE_STARTUP_TRIALS = 5
+PRUNE_FROM_EPOCH = 2
+
+
 def tune(
-    score: Callable[[dict], dict[str, float]],
+    score: Callable[[dict, Callable | None], dict[str, float]],
     space: dict,
     trials: int,
     seed: int,
@@ -65,27 +72,67 @@ def tune(
     log_scale: frozenset[str] = frozenset(),
     params: dict | None = None,
     trials_path: Path | None = None,
+    prune: bool = False,
 ) -> tuple[dict, dict[str, float]]:
-    """Search `space` for the settings whose `score(settings)[metric]` is best; `params` are
-    fixed in every trial. Returns the best settings (with `params`) and their metrics."""
+    """Search `space` for the settings whose `score(settings, report)[metric]` is best;
+    `params` are fixed in every trial. Returns the best settings (with `params`) and their
+    metrics.
+
+    With prune=True, `report` is a function `score` calls after each epoch with
+    report(epoch, metrics); it raises optuna.TrialPruned when the trial falls behind the
+    median of earlier ones. Otherwise `report` is None."""
     params = params or {}
 
     def objective(trial: optuna.Trial) -> float:
         started = time.perf_counter()
         sampled = suggest_params(trial, space, log_scale)
-        metrics = score({**params, **sampled})
+        last_epoch: dict = {}
+
+        def report(epoch: int, metrics: dict[str, float]) -> None:
+            last_epoch.update(epoch=epoch, metrics=metrics)
+            trial.report(metrics[metric], epoch)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+
+        def log(metrics: dict, status: str) -> None:
+            # One row per trial as it ends, so the trials survive a run that is stopped
+            if trials_path is not None:
+                duration = round(time.perf_counter() - started, 1)
+                row = {
+                    "trial": trial.number,
+                    **sampled,
+                    "status": status,
+                    **metrics,
+                    "duration_s": duration,
+                }
+                _append_row(trials_path, row)
+
+        try:
+            metrics = score({**params, **sampled}, report if prune else None)
+        except optuna.TrialPruned:
+            logger.info(f"Trial {trial.number} pruned after epoch {last_epoch['epoch']}")
+            log(last_epoch["metrics"], "pruned")
+            raise
         trial.set_user_attr("metrics", metrics)
-        # One row per trial as it ends, so the trials survive a run that is stopped
-        if trials_path is not None:
-            duration = round(time.perf_counter() - started, 1)
-            row = {"trial": trial.number, **sampled, **metrics, "duration_s": duration}
-            _append_row(trials_path, row)
+        log(metrics, "complete")
         return metrics[metric]
 
+    pruner = (
+        optuna.pruners.MedianPruner(
+            n_startup_trials=PRUNE_STARTUP_TRIALS, n_warmup_steps=PRUNE_FROM_EPOCH
+        )
+        if prune
+        else optuna.pruners.NopPruner()
+    )
     study = optuna.create_study(
-        direction=TUNING_METRICS[metric], sampler=optuna.samplers.TPESampler(seed=seed)
+        direction=TUNING_METRICS[metric],
+        sampler=optuna.samplers.TPESampler(seed=seed),
+        pruner=pruner,
     )
     study.optimize(objective, n_trials=trials)
+    if prune:
+        pruned = sum(t.state == optuna.trial.TrialState.PRUNED for t in study.trials)
+        logger.info(f"{pruned} of {len(study.trials)} trials pruned")
     logger.info(f"Best params: {study.best_params}")
     return {**params, **study.best_params}, study.best_trial.user_attrs["metrics"]
 

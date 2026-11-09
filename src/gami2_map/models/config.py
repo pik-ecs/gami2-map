@@ -1,8 +1,46 @@
-"""Per-model settings for setfit_model.py and classical_model.py."""
+"""Per-model settings for transformer_model.py, setfit_model.py and classical_model.py."""
 
 # Search-space keys sampled on a log scale
+TRANSFORMER_LOG_SCALE = frozenset({"learning_rate"})
 SETFIT_LOG_SCALE = frozenset({"body_learning_rate"})
 CLASSICAL_LOG_SCALE = frozenset({"C"})
+
+
+# A pretrained encoder fine-tuned end to end with a classification head. Every checkpoint is
+# tuned the same way, so the settings are shared and only the model changes with --model
+TRANSFORMER = {
+    "checkpoints": {
+        # 512: BERT's own maximum
+        "bert": {
+            "checkpoint": "bert-base-uncased",
+            "max_length": 512,
+        },
+    },
+    # Weights the cross-entropy loss so the rare include class counts as much as exclude
+    # (as for SETFIT and CLASSICAL)
+    "class_weight": "balanced",
+    # Mixed precision (fp16): ~2-3x faster on a CUDA GPU (e.g. Colab's T4); ignored without one
+    "use_amp": True,
+    # Early stopping: each fit scores validation after every epoch, stops once the tuning
+    # metric hasn't improved for this many epochs and keeps the best epoch's weights; the final
+    # model then trains for the best trial's best epoch. None: always train for "epochs"
+    "early_stopping_patience": 2,
+    # Pruning: tuning stops a trial after an epoch if its validation score is below the median
+    # of earlier trials' at that epoch (holdout only; see tuning.py)
+    "prune": True,
+    "defaults": {
+        "learning_rate": 2e-5,
+        "weight_decay": 0.01,
+        "warmup_ratio": 0.1,
+        "batch_size": 16,
+        # With early stopping, the most a fit trains for
+        "epochs": 10,
+    },
+    # Epochs are left to early stopping rather than searched
+    "search_space": {
+        "learning_rate": (1e-5, 1e-4),
+    },
+}
 
 
 # SetFit fine-tunes every embedder the same way, so the settings are shared and only the embedding model changes with --model
@@ -15,14 +53,23 @@ SETFIT = {
         },
         # SPECTER: SciBERT trained on scientific papers (title + abstract); 512 is its own
         # max_seq_length
-        "allenai": {
+        "allenai-specter": {
             "checkpoint": "sentence-transformers/allenai-specter",
+            "max_length": 512,
+        },
+        # BGE: a strong general-purpose embedder, same size as mpnet; 512 is its own
+        # max_seq_length. Its query instruction is for retrieval only, so none is added
+        "bge-base": {
+            "checkpoint": "BAAI/bge-base-en-v1.5",
             "max_length": 512,
         },
     },
     # For the logistic regression head: weights includes up so the rare class isn't ignored
     # at the 0.5 threshold (as for CLASSICAL)
     "class_weight": "balanced",
+    # Mixed precision (fp16) for the embedder's fine-tuning: ~2-3x faster on a CUDA GPU
+    # (e.g. Colab's T4); ignored without one
+    "use_amp": True,
     "defaults": {
         "body_learning_rate": 2e-5,
         "num_iterations": 20,  # contrastive pairs generated per training example
@@ -49,8 +96,13 @@ CLASSICAL = {
             "max_length": 384,
         },
         # SPECTER: SciBERT trained on scientific papers (title + abstract)
-        "allenai": {
+        "allenai-specter": {
             "checkpoint": "sentence-transformers/allenai-specter",
+            "max_length": 512,
+        },
+        # BGE: a strong general-purpose embedder (no query instruction: that is for retrieval)
+        "bge-base": {
+            "checkpoint": "BAAI/bge-base-en-v1.5",
             "max_length": 512,
         },
         # Averages word vectors over the whole text: no max_length
