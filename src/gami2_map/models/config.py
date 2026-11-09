@@ -13,7 +13,11 @@ SETFIT = {
             "checkpoint": "sentence-transformers/all-mpnet-base-v2",
             "max_length": 384,
         },
+        "allenai": {"checkpoint": "sentence-transformers/allenai-specter"},
     },
+    # For the logistic regression head: weights includes up so the rare class isn't ignored
+    # at the 0.5 threshold (as for CLASSICAL)
+    "class_weight": "balanced",
     "defaults": {
         "body_learning_rate": 2e-5,
         "num_iterations": 20,  # contrastive pairs generated per training example

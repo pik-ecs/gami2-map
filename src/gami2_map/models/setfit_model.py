@@ -59,7 +59,10 @@ def fit(
     """Train one model with the full set of `params` (a config.py entry's defaults) and return it.
     `train_data` needs "text" and "label" columns (see prepare). `model_key` is the --model
     name, e.g. mpnet; its checkpoint is in config.py's SETFIT."""
-    model = SetFitModel.from_pretrained(SETFIT["checkpoints"][model_key]["checkpoint"])
+    model = SetFitModel.from_pretrained(
+        SETFIT["checkpoints"][model_key]["checkpoint"],
+        head_params={"class_weight": SETFIT["class_weight"]},
+    )
 
     args = TrainingArguments(
         output_dir=output_dir,
