@@ -6,7 +6,8 @@ then (see pipeline.run_experiment):
     1. joins the text columns (default title + text) into one model input and tokenizes it
     2. tunes hyperparameters with Optuna on train, scoring the task's metric (tasks_settings.py)
        on validation (skipped with --trials 0); each fit stops early once validation stops
-       improving, and trials falling behind are pruned (see config.py's TRANSFORMER)
+       improving, and with --prune-from-epoch, trials falling behind are stopped (see
+       config.py's TRANSFORMER)
     3. trains the final model with the best settings, for the best trial's best epoch, on
        train + validation combined
     4. evaluates it once on test
@@ -21,7 +22,8 @@ Run after `build-labels`:
     uv run train-transformer inout --model bert
     uv run train-transformer inout --model bert --trials 20
     uv run train-transformer inout --model bert --trials 0     (no tuning: the defaults in config.py)
-    uv run train-transformer inout --model bert --early-stopping-patience 0 --no-prune
+    uv run train-transformer inout --model bert --early-stopping-patience 0
+    uv run train-transformer inout --model bert --prune-from-epoch 3
     uv run train-transformer --help
 """
 
@@ -297,8 +299,11 @@ SPEC = ModelSpec(
     method="transformer",
     checkpoints={key: entry["checkpoint"] for key, entry in TRANSFORMER["checkpoints"].items()},
     max_lengths={key: entry["max_length"] for key, entry in TRANSFORMER["checkpoints"].items()},
-    # Every transformer is tuned the same way
-    defaults={key: TRANSFORMER["defaults"] for key in TRANSFORMER["checkpoints"]},
+    # The shared defaults, overridden by each checkpoint's own
+    defaults={
+        key: {**TRANSFORMER["defaults"], **entry["defaults"]}
+        for key, entry in TRANSFORMER["checkpoints"].items()
+    },
     search_spaces={key: TRANSFORMER["search_space"] for key in TRANSFORMER["checkpoints"]},
     prepare=prepare,
     fit=fit,
@@ -308,7 +313,7 @@ SPEC = ModelSpec(
     class_weight=TRANSFORMER["class_weight"],
     by_epoch=True,
     early_stopping_patience=TRANSFORMER["early_stopping_patience"],
-    prune=TRANSFORMER["prune"],
+    prune_from_epoch=TRANSFORMER["prune_from_epoch"],
     default_trials=20,
 )
 

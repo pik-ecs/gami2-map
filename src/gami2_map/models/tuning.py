@@ -57,10 +57,8 @@ def suggest_params(
 
 
 # Pruning (see tune): no trial is pruned until PRUNE_STARTUP_TRIALS have finished, giving the
-# median something to go on, nor before its PRUNE_FROM_EPOCH-th epoch, so slow starters get a
-# chance
+# median something to go on
 PRUNE_STARTUP_TRIALS = 5
-PRUNE_FROM_EPOCH = 2
 
 
 def tune(
@@ -72,16 +70,18 @@ def tune(
     log_scale: frozenset[str] = frozenset(),
     params: dict | None = None,
     trials_path: Path | None = None,
-    prune: bool = False,
+    prune_from_epoch: int | None = None,
 ) -> tuple[dict, dict[str, float]]:
     """Search `space` for the settings whose `score(settings, report)[metric]` is best;
     `params` are fixed in every trial. Returns the best settings (with `params`) and their
     metrics.
 
-    With prune=True, `report` is a function `score` calls after each epoch with
-    report(epoch, metrics); it raises optuna.TrialPruned when the trial falls behind the
-    median of earlier ones. Otherwise `report` is None."""
+    With `prune_from_epoch` (pruning), `report` is a function `score` calls after each epoch
+    with report(epoch, metrics); from that epoch on, it raises optuna.TrialPruned when the
+    trial falls behind the median of earlier ones (so slow starters get a chance). None: no
+    pruning, and `report` is None."""
     params = params or {}
+    prune = prune_from_epoch is not None
 
     def objective(trial: optuna.Trial) -> float:
         started = time.perf_counter()
@@ -119,7 +119,7 @@ def tune(
 
     pruner = (
         optuna.pruners.MedianPruner(
-            n_startup_trials=PRUNE_STARTUP_TRIALS, n_warmup_steps=PRUNE_FROM_EPOCH
+            n_startup_trials=PRUNE_STARTUP_TRIALS, n_warmup_steps=prune_from_epoch
         )
         if prune
         else optuna.pruners.NopPruner()

@@ -72,9 +72,9 @@ class ModelSpec:
     # model trains for the best trial's best epoch (defaults["epochs"] is then the most a fit
     # trains for). None: no early stopping
     early_stopping_patience: int | None = None
-    # by_epoch only. Pruning: tuning stops trials falling behind earlier ones after an epoch
-    # (see tuning.tune); holdout only
-    prune: bool = False
+    # by_epoch only. Pruning: from this epoch on, tuning stops trials falling behind earlier
+    # ones (see tuning.tune); holdout only. None: no pruning
+    prune_from_epoch: int | None = None
 
     def run_name(self, model_key: str) -> str:
         """e.g. classical-logreg-tfidf: the run's folder under results/<task>/."""
@@ -120,29 +120,29 @@ def run_experiment(
     validation_only: bool = False,
     split: str | None = None,
     early_stopping_patience: int | None = None,
-    prune: bool | None = None,
+    prune_from_epoch: int | None = None,
 ) -> dict:
     """Tune (on holdout validation or with CV, see `split`), train the final model, test it
     once and write results/<task>/<run>/<timestamp>/. `early_stopping_patience` (0 turns it
-    off) and `prune` override the spec's."""
+    off) and `prune_from_epoch` (turns pruning on) override the spec's."""
     # 1. Settings and checks
     trials = spec.default_trials if trials is None else trials
     params, search = params or {}, search or {}
     split = split or spec.default_split
     metric = task_config(task).get("metric", "f1")
-    if early_stopping_patience is not None or prune is not None:
+    if early_stopping_patience is not None or prune_from_epoch is not None:
         if not spec.by_epoch:
             raise BadArguments(
                 f"{spec.method} models don't train by epoch: no early stopping or pruning"
             )
         if early_stopping_patience is not None:
             spec = replace(spec, early_stopping_patience=early_stopping_patience or None)
-        if prune is not None:
-            spec = replace(spec, prune=prune)
+        if prune_from_epoch is not None:
+            spec = replace(spec, prune_from_epoch=prune_from_epoch)
     # Pruning compares one learning curve per trial; with CV there is one per fold
-    if spec.prune and split != "holdout":
+    if spec.prune_from_epoch is not None and split != "holdout":
         logger.info(f"No pruning with --split {split}: it needs holdout")
-        spec = replace(spec, prune=False)
+        spec = replace(spec, prune_from_epoch=None)
     space = check_args(spec, task, model_key, params, search, metric, split)
     max_length = spec.max_lengths.get(model_key)
 
@@ -212,7 +212,8 @@ def run_experiment(
     }
     if spec.by_epoch:
         results["early_stopping_patience"] = spec.early_stopping_patience
-        results["pruning"] = spec.prune and trials > 0
+        # None: no pruning
+        results["prune_from_epoch"] = spec.prune_from_epoch if trials > 0 else None
     if not validation_only:
         results["test_metrics"] = test_metrics
     (run_dir / "results.json").write_text(json.dumps(results, indent=2))
@@ -304,7 +305,7 @@ def tune_and_train(
             log_scale=spec.log_scale,
             params=params,
             trials_path=trials_path,
-            prune=spec.prune,
+            prune_from_epoch=spec.prune_from_epoch,
         )
 
     if early_stopping:
@@ -526,11 +527,11 @@ def make_cli(spec: ModelSpec) -> Callable[[], None]:
                 help="Transformers only: stop each tuning fit once the tuning metric on validation hasn't improved for this many epochs, and train the final model for the best trial's best epoch; 0 turns it off [default: config.py's]",
             ),
         ] = None,
-        prune: Annotated[
-            bool | None,
+        prune_from_epoch: Annotated[
+            int | None,
             typer.Option(
-                "--prune/--no-prune",
-                help="Transformers only: stop tuning trials that fall behind earlier ones after an epoch (holdout only) [default: config.py's]",
+                min=1,
+                help="Transformers only: turns pruning on; from this epoch on, tuning stops trials that fall behind earlier ones (holdout only). Leave out for no pruning [default: config.py's]",
                 show_default=False,
             ),
         ] = None,
@@ -551,7 +552,7 @@ def make_cli(spec: ModelSpec) -> Callable[[], None]:
                 validation_only=validation_only,
                 split=split,
                 early_stopping_patience=early_stopping_patience,
-                prune=prune,
+                prune_from_epoch=prune_from_epoch,
             )
         except BadArguments as e:
             raise typer.BadParameter(str(e)) from e

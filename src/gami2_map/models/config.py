@@ -6,14 +6,37 @@ SETFIT_LOG_SCALE = frozenset({"body_learning_rate"})
 CLASSICAL_LOG_SCALE = frozenset({"C"})
 
 
-# A pretrained encoder fine-tuned end to end with a classification head. Every checkpoint is
-# tuned the same way, so the settings are shared and only the model changes with --model
+# A pretrained encoder fine-tuned end to end with a classification head. The settings below
+# are shared; a checkpoint's own "defaults" override the shared ones (same keys). max_length
+# is each model's own maximum
 TRANSFORMER = {
     "checkpoints": {
-        # 512: BERT's own maximum
         "bert": {
             "checkpoint": "bert-base-uncased",
             "max_length": 512,
+            "defaults": {},
+        },
+        # SciBERT: BERT trained on scientific papers, with a vocabulary built from them (SPECTER
+        # is built on it). Same size as BERT: BERT's settings
+        "scibert": {
+            "checkpoint": "allenai/scibert_scivocab_uncased",
+            "max_length": 512,
+            "defaults": {},
+        },
+        # BGE: the embedder behind the best classical model (logreg-bge-base), fine-tuned end
+        # to end. A BERT-base model: BERT's settings
+        "bge-base": {
+            "checkpoint": "BAAI/bge-base-en-v1.5",
+            "max_length": 512,
+            "defaults": {},
+        },
+        # ClimateBERT: DistilRoBERTa (6 layers, ~2x faster) further trained on climate text
+        # (news, corporate disclosures, research abstracts). No better settings known than
+        # BERT's; the search over learning_rate covers the difference
+        "climatebert": {
+            "checkpoint": "climatebert/distilroberta-base-climate-f",
+            "max_length": 512,
+            "defaults": {},
         },
     },
     # Weights the cross-entropy loss so the rare include class counts as much as exclude
@@ -25,9 +48,10 @@ TRANSFORMER = {
     # metric hasn't improved for this many epochs and keeps the best epoch's weights; the final
     # model then trains for the best trial's best epoch. None: always train for "epochs"
     "early_stopping_patience": 2,
-    # Pruning: tuning stops a trial after an epoch if its validation score is below the median
-    # of earlier trials' at that epoch (holdout only; see tuning.py)
-    "prune": True,
+    # Pruning: from this epoch on, tuning stops a trial after an epoch if its validation score
+    # is below the median of earlier trials' at that epoch (holdout only; see tuning.py).
+    # None: no pruning (--prune-from-epoch turns it on)
+    "prune_from_epoch": None,
     "defaults": {
         "learning_rate": 2e-5,
         "weight_decay": 0.01,

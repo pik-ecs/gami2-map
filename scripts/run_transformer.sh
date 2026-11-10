@@ -17,41 +17,25 @@ source "$(dirname "$0")/common.sh"
 
 TASK="inout"
 
-# Any of config.py's TRANSFORMER checkpoints: bert
-MODELS=(bert)
+# Any of config.py's TRANSFORMER checkpoints: bert, scibert, bge-base, climatebert
+MODELS=(scibert)
 
-# true: tune on validation only (no final model, test unused). false: also train the final
-# model on train + validation (for the best trial's best epoch) and score it once on test
 VALIDATION_ONLY=true
 
-# 12: enough to cover the one searched setting (learning_rate); each trial takes ~1-1.5 h on
-# this Mac (MPS), a few minutes per epoch on a CUDA GPU
-TRIALS=12
+TRIALS=15
 
-# Epochs without improvement on validation before a fit stops; 0 turns early stopping off,
-# empty keeps config.py's
 EARLY_STOPPING_PATIENCE="2"
 
-# true / false: stop trials falling behind earlier ones after an epoch (holdout only); empty
-# keeps config.py's
-PRUNE="true"
+PRUNE_FROM_EPOCH=""
 
-# Any other train-transformer options for every run, e.g. (--set learning_rate=3e-5) to fix
-# the learning rate, (--set learning_rate=1e-5,5e-5) to search it over a range, or
-# (--set epochs=5) for the most epochs a fit trains for.
-
-EXTRA_ARGS=(
-    --set learning_rate=5e-6,3e-5
-    --set epochs=8
-)
+EXTRA_ARGS=(--set learning_rate=1e-5,5e-5 --set epochs=12)
 
 # -------------------------------------------------------------------------------------------
 
 model_args() {
     echo --trials "$TRIALS"
     [[ -n $EARLY_STOPPING_PATIENCE ]] && echo --early-stopping-patience "$EARLY_STOPPING_PATIENCE"
-    [[ $PRUNE == true ]] && echo --prune
-    [[ $PRUNE == false ]] && echo --no-prune
+    [[ -n $PRUNE_FROM_EPOCH ]] && echo --prune-from-epoch "$PRUNE_FROM_EPOCH"
     return 0
 }
 
