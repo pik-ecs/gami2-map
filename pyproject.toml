@@ -6,21 +6,12 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "datasets>=4.1.1",
-    "fasttext>=0.9.3",
-    "greenlet>=3.5.6",
-    "httpx>=0.28.1",
     "huggingface-hub>=2.1.1",
-    "matplotlib>=3.11.2",
-    "mkdocs-material>=9.7.7",
-    "nacsos-data",
-    "nltk>=3.10.3",
     "optuna>=5.0.0",
     "pandas>=3.0.5",
     "pyarrow>=25.0.1",
-    "rdflib>=7.6.0",
     "scikit-learn>=1.9.1",
     "setfit>=1.2.0",
-    "tool>=0.8.0",
     "typer>=0.27.0",
 ]
 
@@ -37,7 +28,22 @@ build-backend = "uv_build"
 [tool.uv.sources]
 nacsos-data = { git = "ssh://git@gitlab.pik-potsdam.de/mcc-apsis/nacsos/nacsos-data.git" }
 
+# Not needed to build labels or train models. `uv sync` installs only dev; on a machine with
+# NACSOS access, `uv sync --all-groups` installs everything
 [dependency-groups]
 dev = [
     "ipykernel>=7.4.0",
+    "matplotlib>=3.11.2",
+]
+# Importing the taxonomy from NACSOS (src/gami2_map/nacsos/); nacsos-data needs SSH access
+# to PIK's GitLab
+nacsos = [
+    "greenlet>=3.5.6",
+    "httpx>=0.28.1",
+    "nacsos-data",
+    "rdflib>=7.6.0",
+]
+# The docs site (mkdocs.yml)
+docs = [
+    "mkdocs-material>=9.7.7",
 ]
